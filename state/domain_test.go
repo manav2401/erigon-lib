@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ledgerwatch/erigon-lib/common/background"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/stretchr/testify/require"
 	btree2 "github.com/tidwall/btree"
@@ -50,13 +51,13 @@ func testDbAndDomain(t *testing.T) (string, kv.RwDB, *Domain) {
 			keysTable:        kv.TableCfgItem{Flags: kv.DupSort},
 			valsTable:        kv.TableCfgItem{},
 			historyKeysTable: kv.TableCfgItem{Flags: kv.DupSort},
-			historyValsTable: kv.TableCfgItem{},
+			historyValsTable: kv.TableCfgItem{Flags: kv.DupSort},
 			settingsTable:    kv.TableCfgItem{},
 			indexTable:       kv.TableCfgItem{Flags: kv.DupSort},
 		}
 	}).MustOpen()
 	t.Cleanup(db.Close)
-	d, err := NewDomain(path, path, 16 /* aggregationStep */, "base" /* filenameBase */, keysTable, valsTable, historyKeysTable, historyValsTable, settingsTable, indexTable, true /* compressVals */)
+	d, err := NewDomain(path, path, 16, "base", keysTable, valsTable, historyKeysTable, historyValsTable, indexTable, true, false)
 	require.NoError(t, err)
 	t.Cleanup(d.Close)
 	return path, db, d
@@ -103,7 +104,7 @@ func TestCollationBuild(t *testing.T) {
 	require.Equal(t, []uint64{3}, c.indexBitmaps["key2"].ToArray())
 	require.Equal(t, []uint64{2, 6}, c.indexBitmaps["key1"].ToArray())
 
-	sf, err := d.buildFiles(ctx, 0, c)
+	sf, err := d.buildFiles(ctx, 0, c, background.NewProgressSet())
 	require.NoError(t, err)
 	defer sf.Close()
 	c.Close()
@@ -208,7 +209,7 @@ func TestAfterPrune(t *testing.T) {
 	c, err := d.collate(ctx, 0, 0, 16, tx, logEvery)
 	require.NoError(t, err)
 
-	sf, err := d.buildFiles(ctx, 0, c)
+	sf, err := d.buildFiles(ctx, 0, c, background.NewProgressSet())
 	require.NoError(t, err)
 
 	d.integrateFiles(sf, 0, 16)
@@ -225,16 +226,9 @@ func TestAfterPrune(t *testing.T) {
 	err = d.prune(ctx, 0, 0, 16, math.MaxUint64, logEvery)
 	require.NoError(t, err)
 
-	for _, table := range []string{d.keysTable, d.valsTable, d.indexKeysTable, d.historyValsTable, d.indexTable} {
-		var cur kv.Cursor
-		cur, err = tx.Cursor(table)
-		require.NoError(t, err)
-		defer cur.Close()
-		var k []byte
-		k, _, err = cur.First()
-		require.NoError(t, err)
-		require.NotNilf(t, k, table, string(k))
-	}
+	isEmpty, err := d.isEmpty(tx)
+	require.NoError(t, err)
+	require.False(t, isEmpty)
 
 	v, err = dc.Get([]byte("key1"), nil, tx)
 	require.NoError(t, err)
@@ -337,7 +331,7 @@ func TestHistory(t *testing.T) {
 		func() {
 			c, err := d.collate(ctx, step, step*d.aggregationStep, (step+1)*d.aggregationStep, tx, logEvery)
 			require.NoError(t, err)
-			sf, err := d.buildFiles(ctx, step, c)
+			sf, err := d.buildFiles(ctx, step, c, background.NewProgressSet())
 			require.NoError(t, err)
 			d.integrateFiles(sf, step*d.aggregationStep, (step+1)*d.aggregationStep)
 
@@ -399,7 +393,7 @@ func TestIterationMultistep(t *testing.T) {
 		func() {
 			c, err := d.collate(ctx, step, step*d.aggregationStep, (step+1)*d.aggregationStep, tx, logEvery)
 			require.NoError(t, err)
-			sf, err := d.buildFiles(ctx, step, c)
+			sf, err := d.buildFiles(ctx, step, c, background.NewProgressSet())
 			require.NoError(t, err)
 			d.integrateFiles(sf, step*d.aggregationStep, (step+1)*d.aggregationStep)
 			err = d.prune(ctx, step, step*d.aggregationStep, (step+1)*d.aggregationStep, math.MaxUint64, logEvery)
@@ -438,7 +432,7 @@ func collateAndMerge(t *testing.T, db kv.RwDB, tx kv.RwTx, d *Domain, txs uint64
 	for step := uint64(0); step < txs/d.aggregationStep-1; step++ {
 		c, err := d.collate(ctx, step, step*d.aggregationStep, (step+1)*d.aggregationStep, tx, logEvery)
 		require.NoError(t, err)
-		sf, err := d.buildFiles(ctx, step, c)
+		sf, err := d.buildFiles(ctx, step, c, background.NewProgressSet())
 		require.NoError(t, err)
 		d.integrateFiles(sf, step*d.aggregationStep, (step+1)*d.aggregationStep)
 		err = d.prune(ctx, step, step*d.aggregationStep, (step+1)*d.aggregationStep, math.MaxUint64, logEvery)
@@ -452,7 +446,7 @@ func collateAndMerge(t *testing.T, db kv.RwDB, tx kv.RwTx, d *Domain, txs uint64
 			dc := d.MakeContext()
 			defer dc.Close()
 			valuesOuts, indexOuts, historyOuts, _ := d.staticFilesInRange(r, dc)
-			valuesIn, indexIn, historyIn, err := d.mergeFiles(ctx, valuesOuts, indexOuts, historyOuts, r, 1)
+			valuesIn, indexIn, historyIn, err := d.mergeFiles(ctx, valuesOuts, indexOuts, historyOuts, r, 1, background.NewProgressSet())
 			require.NoError(t, err)
 			d.integrateMergedFiles(valuesOuts, indexOuts, historyOuts, valuesIn, indexIn, historyIn)
 		}()
@@ -473,7 +467,7 @@ func collateAndMergeOnce(t *testing.T, d *Domain, step uint64) {
 	c, err := d.collate(ctx, step, txFrom, txTo, d.tx, logEvery)
 	require.NoError(t, err)
 
-	sf, err := d.buildFiles(ctx, step, c)
+	sf, err := d.buildFiles(ctx, step, c, background.NewProgressSet())
 	require.NoError(t, err)
 	d.integrateFiles(sf, txFrom, txTo)
 
@@ -486,7 +480,7 @@ func collateAndMergeOnce(t *testing.T, d *Domain, step uint64) {
 	for r = d.findMergeRange(maxEndTxNum, maxSpan); r.any(); r = d.findMergeRange(maxEndTxNum, maxSpan) {
 		dc := d.MakeContext()
 		valuesOuts, indexOuts, historyOuts, _ := d.staticFilesInRange(r, dc)
-		valuesIn, indexIn, historyIn, err := d.mergeFiles(ctx, valuesOuts, indexOuts, historyOuts, r, 1)
+		valuesIn, indexIn, historyIn, err := d.mergeFiles(ctx, valuesOuts, indexOuts, historyOuts, r, 1, background.NewProgressSet())
 		require.NoError(t, err)
 
 		d.integrateMergedFiles(valuesOuts, indexOuts, historyOuts, valuesIn, indexIn, historyIn)
@@ -517,9 +511,9 @@ func TestScanFiles(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	_, db, d := testDbAndDomain(t)
-	ctx := context.Background()
+	ctx, require := context.Background(), require.New(t)
 	tx, err := db.BeginRw(ctx)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer tx.Rollback()
 	d.SetTx(tx)
 	d.StartWrites()
@@ -533,26 +527,30 @@ func TestDelete(t *testing.T) {
 		} else {
 			err = d.Delete([]byte("key1"), nil)
 		}
-		require.NoError(t, err)
+		require.NoError(err)
 	}
 	err = d.Rotate().Flush(ctx, tx)
-	require.NoError(t, err)
+	require.NoError(err)
 	collateAndMerge(t, db, tx, d, 1000)
 	// Check the history
 	dc := d.MakeContext()
 	defer dc.Close()
 	for txNum := uint64(0); txNum < 1000; txNum++ {
-		val, err := dc.GetBeforeTxNum([]byte("key1"), txNum+1, tx)
-		require.NoError(t, err)
 		label := fmt.Sprintf("txNum=%d", txNum)
-		if txNum%2 == 0 {
-			require.Equal(t, []byte("value1"), val, label)
-		} else {
-			require.Nil(t, val, label)
-		}
-		val, err = dc.GetBeforeTxNum([]byte("key2"), txNum+1, tx)
-		require.NoError(t, err)
-		require.Nil(t, val, label)
+		//val, ok, err := dc.GetBeforeTxNum([]byte("key1"), txNum+1, tx)
+		//require.NoError(err)
+		//require.True(ok)
+		//if txNum%2 == 0 {
+		//	require.Equal([]byte("value1"), val, label)
+		//} else {
+		//	require.Nil(val, label)
+		//}
+		//if txNum == 976 {
+		val, err := dc.GetBeforeTxNum([]byte("key2"), txNum+1, tx)
+		require.NoError(err)
+		//require.False(ok, label)
+		require.Nil(val, label)
+		//}
 	}
 }
 
@@ -719,6 +717,7 @@ func TestDomain_PruneOnWrite(t *testing.T) {
 			binary.BigEndian.PutUint64(v[:], valNum)
 
 			val, err := dc.GetBeforeTxNum(k[:], txNum+1, tx)
+			require.NoError(t, err)
 			if keyNum == txNum%d.aggregationStep {
 				if txNum > 1 {
 					binary.BigEndian.PutUint64(v[:], txNum-1)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/holiman/uint256"
+	"github.com/ledgerwatch/erigon-lib/common/background"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/stretchr/testify/require"
 
@@ -237,7 +238,7 @@ func TestAggregator_RestartOnDatadir(t *testing.T) {
 
 	anotherAgg.SetTx(rwTx)
 	startTx := anotherAgg.EndTxNumMinimax()
-	sstartTx, err := anotherAgg.SeekCommitment()
+	_, sstartTx, err := anotherAgg.SeekCommitment()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, sstartTx, startTx)
 	require.GreaterOrEqual(t, sstartTx, latestCommitTxNum)
@@ -310,8 +311,6 @@ func TestAggregator_RestartOnFiles(t *testing.T) {
 	tx = nil
 	db.Close()
 	agg.Close()
-	db = nil
-	agg = nil
 
 	require.NoError(t, os.RemoveAll(filepath.Join(path, "db4")))
 
@@ -332,7 +331,7 @@ func TestAggregator_RestartOnFiles(t *testing.T) {
 	newAgg.SetTx(newTx)
 	newAgg.StartWrites()
 
-	latestTx, err := newAgg.SeekCommitment()
+	_, latestTx, err := newAgg.SeekCommitment()
 	require.NoError(t, err)
 	t.Logf("seek to latest_tx=%d", latestTx)
 
@@ -625,7 +624,7 @@ func Test_InitBtreeIndex(t *testing.T) {
 	require.NoError(t, err)
 	defer decomp.Close()
 
-	err = BuildBtreeIndexWithDecompressor(tmp+".bt", decomp)
+	err = BuildBtreeIndexWithDecompressor(tmp+".bt", decomp, &background.Progress{})
 	require.NoError(t, err)
 
 	bt, err := OpenBtreeIndexWithDecompressor(tmp+".bt", M, decomp)

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/c2h5oh/datasize"
+	"github.com/ledgerwatch/erigon-lib/common/background"
 	"github.com/ledgerwatch/log/v3"
 
 	"github.com/ledgerwatch/erigon-lib/common"
@@ -767,7 +768,7 @@ func (btw *BtIndexWriter) AddKey(key []byte, offset uint64) error {
 		}
 	}
 
-	if err := btw.bucketCollector.Collect(key[:], btw.numBuf[:]); err != nil {
+	if err := btw.bucketCollector.Collect(key, btw.numBuf[:]); err != nil {
 		return err
 	}
 	btw.keyCount++
@@ -802,15 +803,15 @@ func CreateBtreeIndex(indexPath, dataPath string, M uint64) (*BtIndex, error) {
 
 var DefaultBtreeM = uint64(2048)
 
-func CreateBtreeIndexWithDecompressor(indexPath string, M uint64, decompressor *compress.Decompressor) (*BtIndex, error) {
-	err := BuildBtreeIndexWithDecompressor(indexPath, decompressor)
+func CreateBtreeIndexWithDecompressor(indexPath string, M uint64, decompressor *compress.Decompressor, p *background.Progress) (*BtIndex, error) {
+	err := BuildBtreeIndexWithDecompressor(indexPath, decompressor, p)
 	if err != nil {
 		return nil, err
 	}
 	return OpenBtreeIndexWithDecompressor(indexPath, M, decompressor)
 }
 
-func BuildBtreeIndexWithDecompressor(indexPath string, kv *compress.Decompressor) error {
+func BuildBtreeIndexWithDecompressor(indexPath string, kv *compress.Decompressor, p *background.Progress) error {
 	args := BtIndexWriterArgs{
 		IndexFile: indexPath,
 		TmpDir:    filepath.Dir(indexPath),
@@ -830,8 +831,9 @@ func BuildBtreeIndexWithDecompressor(indexPath string, kv *compress.Decompressor
 	var pos uint64
 	emptys := 0
 	for getter.HasNext() {
+		p.Processed.Add(1)
 		key, kp := getter.Next(key[:0])
-		err = iw.AddKey(key[:], pos)
+		err = iw.AddKey(key, pos)
 		if err != nil {
 			return err
 		}
@@ -876,7 +878,7 @@ func BuildBtreeIndex(dataPath, indexPath string) error {
 	var pos uint64
 	for getter.HasNext() {
 		key, _ := getter.Next(key[:0])
-		err = iw.AddKey(key[:], pos)
+		err = iw.AddKey(key, pos)
 		if err != nil {
 			return err
 		}

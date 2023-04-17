@@ -301,19 +301,6 @@ const (
 	CliqueSnapshot     = "CliqueSnapshot"
 	CliqueLastSnapshot = "CliqueLastSnapshot"
 
-	// Snapshot table used for Binance Smart Chain's consensus engine Parlia
-	// Schema of key/value pairs containing:
-	// Key (string): SnapshotFullKey = SnapshotBucket + num (uint64 big endian) + hash
-	// Value (JSON blob):
-	// {
-	//     "number"             // Block number where the snapshot was created
-	//     "hash"               // Block hash where the snapshot was created
-	//     "validators"         // Set of authorized validators at this moment
-	//     "recents"            // Set of recent validators for spam protections
-	//     "recent_fork_hashes" // Set of recent forkHash
-	// }
-	ParliaSnapshot = "ParliaSnapshot"
-
 	// Proof-of-stake
 	// Beacon chain head that is been executed at the current time
 	CurrentExecutionPayload = "CurrentExecutionPayload"
@@ -371,28 +358,24 @@ const (
 	AccountVals        = "AccountVals"
 	AccountHistoryKeys = "AccountHistoryKeys"
 	AccountHistoryVals = "AccountHistoryVals"
-	AccountSettings    = "AccountSettings"
 	AccountIdx         = "AccountIdx"
 
 	StorageKeys        = "StorageKeys"
 	StorageVals        = "StorageVals"
 	StorageHistoryKeys = "StorageHistoryKeys"
 	StorageHistoryVals = "StorageHistoryVals"
-	StorageSettings    = "StorageSettings"
 	StorageIdx         = "StorageIdx"
 
 	CodeKeys        = "CodeKeys"
 	CodeVals        = "CodeVals"
 	CodeHistoryKeys = "CodeHistoryKeys"
 	CodeHistoryVals = "CodeHistoryVals"
-	CodeSettings    = "CodeSettings"
 	CodeIdx         = "CodeIdx"
 
 	CommitmentKeys        = "CommitmentKeys"
 	CommitmentVals        = "CommitmentVals"
 	CommitmentHistoryKeys = "CommitmentHistoryKeys"
 	CommitmentHistoryVals = "CommitmentHistoryVals"
-	CommitmentSettings    = "CommitmentSettings"
 	CommitmentIdx         = "CommitmentIdx"
 
 	LogAddressKeys = "LogAddressKeys"
@@ -493,7 +476,6 @@ var ChaindataTables = []string{
 	CliqueSeparate,
 	CliqueLastSnapshot,
 	CliqueSnapshot,
-	ParliaSnapshot,
 	SyncStageProgress,
 	PlainState,
 	PlainContractCode,
@@ -537,28 +519,24 @@ var ChaindataTables = []string{
 	AccountVals,
 	AccountHistoryKeys,
 	AccountHistoryVals,
-	AccountSettings,
 	AccountIdx,
 
 	StorageKeys,
 	StorageVals,
 	StorageHistoryKeys,
 	StorageHistoryVals,
-	StorageSettings,
 	StorageIdx,
 
 	CodeKeys,
 	CodeVals,
 	CodeHistoryKeys,
 	CodeHistoryVals,
-	CodeSettings,
 	CodeIdx,
 
 	CommitmentKeys,
 	CommitmentVals,
 	CommitmentHistoryKeys,
 	CommitmentHistoryVals,
-	CommitmentSettings,
 	CommitmentIdx,
 
 	LogAddressKeys,
@@ -677,9 +655,11 @@ var ChaindataTablesCfg = TableCfg{
 
 	AccountKeys:           {Flags: DupSort},
 	AccountHistoryKeys:    {Flags: DupSort},
+	AccountHistoryVals:    {Flags: DupSort},
 	AccountIdx:            {Flags: DupSort},
 	StorageKeys:           {Flags: DupSort},
 	StorageHistoryKeys:    {Flags: DupSort},
+	StorageHistoryVals:    {Flags: DupSort},
 	StorageIdx:            {Flags: DupSort},
 	CodeKeys:              {Flags: DupSort},
 	CodeHistoryKeys:       {Flags: DupSort},
