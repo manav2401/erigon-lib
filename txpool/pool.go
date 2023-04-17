@@ -21,7 +21,6 @@ import (
 	"container/heap"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -93,9 +92,9 @@ var DefaultConfig = Config{
 	CommitEvery:           15 * time.Second,
 	LogEvery:              30 * time.Second,
 
-	PendingSubPoolLimit: 10_000,
-	BaseFeeSubPoolLimit: 10_000,
-	QueuedSubPoolLimit:  10_000,
+	PendingSubPoolLimit: 30_000,
+	BaseFeeSubPoolLimit: 30_000,
+	QueuedSubPoolLimit:  30_000,
 
 	MinFeeCap:            1,
 	AccountSlots:         16, //TODO: to choose right value (16 to be compatible with Geth)
@@ -442,9 +441,11 @@ func (p *TxPool) OnNewBlock(ctx context.Context, stateChanges *remote.StateChang
 		}
 	}
 
+	// print("pre removeMined", p.all, minedTxs.Txs, p.pending, p.baseFee, p.queued)
 	if err := removeMined(p.all, minedTxs.Txs, p.pending, p.baseFee, p.queued, p.discardLocked); err != nil {
 		return err
 	}
+	// print("post removeMined", p.all, minedTxs.Txs, p.pending, p.baseFee, p.queued)
 
 	//log.Debug("[txpool] new block", "unwinded", len(unwindTxs.txs), "mined", len(minedTxs.txs), "baseFee", baseFee, "blockHeight", blockHeight)
 
@@ -759,12 +760,12 @@ func (p *TxPool) validateTx(txn *types.TxSlot, isLocal bool, stateCache kvcache.
 		}
 		return IntrinsicGas
 	}
-	if !isLocal && uint64(p.all.count(txn.SenderID)) > p.cfg.AccountSlots {
-		if txn.Traced {
-			log.Info(fmt.Sprintf("TX TRACING: validateTx marked as spamming idHash=%x slots=%d, limit=%d", txn.IDHash, p.all.count(txn.SenderID), p.cfg.AccountSlots))
-		}
-		return Spammer
-	}
+	// if !isLocal && uint64(p.all.count(txn.SenderID)) > p.cfg.AccountSlots {
+	// 	if txn.Traced {
+	// 		log.Info(fmt.Sprintf("TX TRACING: validateTx marked as spamming idHash=%x slots=%d, limit=%d", txn.IDHash, p.all.count(txn.SenderID), p.cfg.AccountSlots))
+	// 	}
+	// 	return Spammer
+	// }
 
 	// check nonce and balance
 	senderNonce, senderBalance, _ := p.senders.info(stateCache, txn.SenderID)
@@ -1002,6 +1003,7 @@ func addTxs(blockNum uint64, cacheView kvcache.CacheView, senders *sendersBatch,
 	// time (up to some "immutability threshold").
 	sendersWithChangedState := map[uint64]struct{}{}
 	discardReasons := make([]DiscardReason, len(newTxs.Txs))
+	// log.Info("---- txpool: addTxs", "len(txs)", len(newTxs.Txs))
 	for i, txn := range newTxs.Txs {
 		if found, ok := byHash[string(txn.IDHash[:])]; ok {
 			discardReasons[i] = DuplicateHash
@@ -1184,6 +1186,7 @@ func (p *TxPool) addLocked(mt *metaTx) DiscardReason {
 // dropping transaction from all sub-structures and from db
 // Important: don't call it while iterating by all
 func (p *TxPool) discardLocked(mt *metaTx, reason DiscardReason) {
+	// log.Info("---- discarding transaction", "tx nonce", mt.Tx.Nonce, "reason", reason)
 	delete(p.byHash, string(mt.Tx.IDHash[:]))
 	p.deletedTxs = append(p.deletedTxs, mt)
 	p.all.delete(mt)
@@ -1200,6 +1203,32 @@ func (p *TxPool) NonceFromAddress(addr [20]byte) (nonce uint64, inPool bool) {
 	return p.all.nonce(senderID)
 }
 
+func print(prefix string, byNonce *BySenderAndNonce, minedTxs []*types.TxSlot, pending *PendingPool, baseFee, queued *SubPool) {
+	fmt.Printf("-------------%s-----------------\n", prefix)
+	fmt.Println("----- all txs")
+	printMetaTxDetails := func(m *metaTx) bool {
+		fmt.Println("---- tx", "nonce", m.Tx.Nonce)
+		return true
+	}
+	byNonce.ascendAll(printMetaTxDetails)
+	fmt.Println()
+
+	fmt.Println("---- mined txs in this block", "count", len(minedTxs))
+	for _, value := range minedTxs {
+		fmt.Println("---- mined tx", "nonce", value.Nonce)
+	}
+	fmt.Println()
+
+	fmt.Println("---- pending pool state")
+	pending.DebugPrint("pending")
+	fmt.Println()
+
+	fmt.Println("---- queued pool state")
+	queued.DebugPrint("queued")
+	fmt.Println()
+	fmt.Printf("-------------%s-----------------", prefix)
+}
+
 // removeMined - apply new highest block (or batch of blocks)
 //
 // 1. New best block arrives, which potentially changes the balance and the nonce of some senders.
@@ -1209,6 +1238,7 @@ func (p *TxPool) NonceFromAddress(addr [20]byte) (nonce uint64, inPool bool) {
 // the actual presence of nonce gaps and what the balance is.
 func removeMined(byNonce *BySenderAndNonce, minedTxs []*types.TxSlot, pending *PendingPool, baseFee, queued *SubPool, discard func(*metaTx, DiscardReason)) error {
 	noncesToRemove := map[uint64]uint64{}
+	// print(byNonce, minedTxs, pending, baseFee, queued)
 	for _, txn := range minedTxs {
 		nonce, ok := noncesToRemove[txn.SenderID]
 		if !ok || txn.Nonce > nonce {
@@ -1228,7 +1258,7 @@ func removeMined(byNonce *BySenderAndNonce, minedTxs []*types.TxSlot, pending *P
 				return false
 			}
 			if mt.Tx.Traced {
-				log.Info(fmt.Sprintf("TX TRACING: removeMined idHash=%x senderId=%d, currentSubPool=%s", mt.Tx.IDHash, mt.Tx.SenderID, mt.currentSubPool))
+				log.Info(fmt.Sprintf("TX TRACING: removeMined idHash=%x senderId=%d, currentSubPool=%s, nonce=%d", mt.Tx.IDHash, mt.Tx.SenderID, mt.currentSubPool, mt.Tx.Nonce))
 			}
 			toDel = append(toDel, mt)
 			// del from sub-pool
@@ -1540,11 +1570,11 @@ func MainLoop(ctx context.Context, db kv.RwDB, coreDB kv.RoDB, p *TxPool, newTxs
 				}
 
 				// first broadcast all local txs to all peers, then non-local to random sqrt(peersAmount) peers
-				txSentTo := send.BroadcastPooledTxs(localTxRlps)
-				hashSentTo := send.AnnouncePooledTxs(localTxTypes, localTxSizes, localTxHashes)
+				send.BroadcastPooledTxs(localTxRlps)
+				send.AnnouncePooledTxs(localTxTypes, localTxSizes, localTxHashes)
 				for i := 0; i < localTxHashes.Len(); i++ {
-					hash := localTxHashes.At(i)
-					log.Info("local tx propagated", "tx_hash", hex.EncodeToString(hash), "announced to peers", hashSentTo[i], "broadcast to peers", txSentTo[i], "baseFee", p.pendingBaseFee.Load())
+					// hash := localTxHashes.At(i)
+					// log.Info("local tx propagated", "tx_hash", hex.EncodeToString(hash), "announced to peers", hashSentTo[i], "broadcast to peers", txSentTo[i], "baseFee", p.pendingBaseFee.Load())
 				}
 				send.BroadcastPooledTxs(remoteTxRlps)
 				send.AnnouncePooledTxs(remoteTxTypes, remoteTxSizes, remoteTxHashes)
@@ -2168,6 +2198,7 @@ type PendingPool struct {
 }
 
 func NewPendingSubPool(t SubPoolType, limit int) *PendingPool {
+	log.Info("*** Creating Pending Sub Pool", "limit", limit)
 	return &PendingPool{limit: limit, t: t, best: &bestSlice{ms: []*metaTx{}}, worst: &WorstQueue{ms: []*metaTx{}}}
 }
 
@@ -2263,8 +2294,10 @@ func (p *PendingPool) DebugPrint(prefix string) {
 		fmt.Printf("%s.best: %d, %d, %d,%d\n", prefix, i, it.subPool, it.bestIndex, it.Tx.Nonce)
 	}
 	for i, it := range p.worst.ms {
-		fmt.Printf("%s.worst: %d, %d, %d,%d\n", prefix, i, it.subPool, it.worstIndex, it.Tx.Nonce)
+		fmt.Printf("%s.best: %d, nonce: %d\n", prefix, i, it.Tx.Nonce)
+		// fmt.Printf("%s.worst: %d, %d, %d,%d\n", prefix, i, it.subPool, it.worstIndex, it.Tx.Nonce)
 	}
+
 }
 
 type SubPool struct {
@@ -2344,7 +2377,8 @@ func (p *SubPool) DebugPrint(prefix string) {
 		fmt.Printf("%s.best: %d, %d, %d\n", prefix, i, it.subPool, it.bestIndex)
 	}
 	for i, it := range p.worst.ms {
-		fmt.Printf("%s.worst: %d, %d, %d\n", prefix, i, it.subPool, it.worstIndex)
+		// fmt.Printf("%s.worst: %d, %d, %d\n", prefix, i, it.subPool, it.worstIndex)
+		fmt.Printf("%s.best: %d, nonce: %d\n", prefix, i, it.Tx.Nonce)
 	}
 }
 
