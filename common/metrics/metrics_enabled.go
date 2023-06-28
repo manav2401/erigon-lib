@@ -18,16 +18,18 @@ package metrics
 
 // Config contains the configuration for the metric collection.
 type Config struct { //nolint:maligned
-	Enabled          bool   `toml:",omitempty"`
-	EnabledExpensive bool   `toml:",omitempty"`
-	HTTP             string `toml:",omitempty"`
-	Port             int    `toml:",omitempty"`
+	Enabled               bool   `toml:",omitempty"`
+	EnabledExpensive      bool   `toml:",omitempty"`
+	HTTP                  string `toml:",omitempty"`
+	Port                  int    `toml:",omitempty"`
+	OpenCollectorEndpoint string `toml:",omitempty"`
 }
 
 // DefaultConfig is the default config for metrics used in go-ethereum.
 var DefaultConfig = Config{
-	Enabled:          false,
-	EnabledExpensive: false,
-	HTTP:             "127.0.0.1",
-	Port:             6060,
+	Enabled:               false,
+	EnabledExpensive:      false,
+	HTTP:                  "127.0.0.1",
+	Port:                  6060,
+	OpenCollectorEndpoint: "",
 }
