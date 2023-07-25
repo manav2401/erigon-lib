@@ -543,6 +543,10 @@ func (p *TxPool) best(n uint16, txs *types.TxsRlp, tx kv.Tx, onTopOf, availableG
 	var toRemove []*metaTx
 	count := 0
 
+	p.logger.Info("[DEBUG] Iterating over best txs", "len", len(best.ms))
+
+	a, b, c, d, e := 0, 0, 0, 0, 0
+
 	for i := 0; count < int(n) && i < len(best.ms); i++ {
 		// if we wouldn't have enough gas for a standard transaction then quit out early
 		if availableGas < fixedgas.TxGas {
@@ -552,11 +556,13 @@ func (p *TxPool) best(n uint16, txs *types.TxsRlp, tx kv.Tx, onTopOf, availableG
 		mt := best.ms[i]
 
 		if toSkip.Contains(mt.Tx.IDHash) {
+			a++
 			continue
 		}
 
 		if mt.Tx.Gas >= p.blockGasLimit.Load() {
 			// Skip transactions with very large gas limit
+			b++
 			continue
 		}
 		rlpTx, sender, isLocal, err := p.getRlpLocked(tx, mt.Tx.IDHash[:])
@@ -565,12 +571,14 @@ func (p *TxPool) best(n uint16, txs *types.TxsRlp, tx kv.Tx, onTopOf, availableG
 		}
 		if len(rlpTx) == 0 {
 			toRemove = append(toRemove, mt)
+			c++
 			continue
 		}
 
 		// Skip transactions that require more data gas than is available
 		blobCount := uint64(len(mt.Tx.BlobHashes))
 		if blobCount*chain.DataGasPerBlob > availableDataGas {
+			d++
 			continue
 		}
 		availableDataGas -= blobCount * chain.DataGasPerBlob
@@ -581,6 +589,7 @@ func (p *TxPool) best(n uint16, txs *types.TxsRlp, tx kv.Tx, onTopOf, availableG
 		intrinsicGas, _ := txpoolcfg.CalcIntrinsicGas(uint64(mt.Tx.DataLen), uint64(mt.Tx.DataNonZeroLen), nil, mt.Tx.Creation, true, true, isShanghai)
 		if intrinsicGas > availableGas {
 			// we might find another TX with a low enough intrinsic gas to include so carry on
+			e++
 			continue
 		}
 		availableGas -= intrinsicGas
@@ -591,6 +600,9 @@ func (p *TxPool) best(n uint16, txs *types.TxsRlp, tx kv.Tx, onTopOf, availableG
 		toSkip.Add(mt.Tx.IDHash)
 		count++
 	}
+
+	p.logger.Info("[DEBUG] Done iterating", "len", len(txs.Txs))
+	p.logger.Info("[DEBUG] Skip stats", "a", a, "b", b, "c", c, "d", d, "e", e)
 
 	txs.Resize(uint(count))
 	if len(toRemove) > 0 {
